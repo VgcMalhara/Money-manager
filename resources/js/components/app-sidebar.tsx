@@ -28,6 +28,12 @@ const mainNavItems: NavItem[] = [
         href: route('accounts.index'),
         icon: LayoutGrid,
     },
+    {
+        title: 'Categories',
+        href: route('categories.index'),
+        icon: LayoutGrid,
+    },
+
 ];
 
 const footerNavItems: NavItem[] = [

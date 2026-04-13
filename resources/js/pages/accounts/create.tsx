@@ -15,6 +15,7 @@ export default function Create() {
     const submit = (e: React.FormEvent) => {
         e.preventDefault();
         post(route('accounts.store'));
+
     };
 
     return (
