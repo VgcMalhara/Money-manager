@@ -33,6 +33,11 @@ const mainNavItems: NavItem[] = [
         href: route('categories.index'),
         icon: LayoutGrid,
     },
+    {
+        title: 'Transactions',
+        href: route('transactions.index'),
+        icon: LayoutGrid,
+    },
 
 ];
 

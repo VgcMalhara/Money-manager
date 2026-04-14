@@ -3,64 +3,79 @@
 namespace App\Http\Controllers;
 
 use App\Models\Transaction;
-use App\Models\Category;
 use App\Models\Account;
+use App\Models\Category;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
-use Illuminate\Support\Facades\Auth;
 
 class TransactionController extends Controller
 {
     /**
-     * 1. Display all transactions (Read)
+     * Display a listing of the transactions (Logged in user's only).
      */
     public function index()
     {
         return Inertia::render('transactions/index', [
-            'transactions' => Auth::user()->transactions()
+            'transactions' => Transaction::where('user_id', auth()->id()) // අදාළ user ගේ ඒවා විතරයි
                 ->with(['category', 'account'])
-                ->orderBy('date', 'desc')
+                ->latest('date')
                 ->get()
         ]);
     }
 
     /**
-     * 2. Show the form for creating a new transaction
+     * Show the form for creating a new transaction.
      */
     public function create()
     {
         return Inertia::render('transactions/create', [
-            'categories' => Auth::user()->categories()->get(),
-            'accounts' => Auth::user()->accounts()->get(),
+            'categories' => Category::all(),
+            'accounts' => Account::all()
         ]);
     }
 
     /**
-     * 3. Store a newly created transaction (Create)
+     * Store a newly created transaction.
      */
     public function store(Request $request)
     {
         $validated = $request->validate([
             'category_id' => 'required|exists:categories,id',
             'account_id'  => 'required|exists:accounts,id',
-            'amount'      => 'required|numeric|min:0.01',
-            'description' => 'nullable|string|max:255',
-            'date'        => 'required|date',
+            'amount'      => 'required|numeric|min:0',
             'type'        => 'required|in:income,expense',
+            'date'        => 'required|date',
+            'description' => 'nullable|string',
         ]);
 
-        Auth::user()->transactions()->create($validated);
+        DB::transaction(function () use ($validated) {
+            // User ID එක මෙතනදී manual එකතු කරනවා
+            Transaction::create(array_merge($validated, [
+                'user_id' => auth()->id()
+            ]));
 
-        return redirect()->route('transactions.index')->with('success', 'Transaction added!');
+            $account = Account::findOrFail($validated['account_id']);
+            if ($validated['type'] === 'income') {
+                $account->balance += $validated['amount'];
+            } else {
+                $account->balance -= $validated['amount'];
+            }
+            $account->save();
+        });
+
+        return redirect()->route('transactions.index');
     }
 
     /**
-     * 4. Display a specific transaction (Show)
+     * Display the specified transaction.
      */
     public function show(Transaction $transaction)
     {
-        // Check ownership
-        if ($transaction->user_id !== Auth::id()) abort(403);
+        // වෙනත් user කෙනෙක්ගේ එකක් බලන්න බැරි වෙන්න දාපු security check එකක්
+        if ($transaction->user_id !== auth()->id()) {
+            abort(403);
+        }
 
         return Inertia::render('transactions/show', [
             'transaction' => $transaction->load(['category', 'account'])
@@ -68,49 +83,87 @@ class TransactionController extends Controller
     }
 
     /**
-     * 5. Show the form for editing a transaction
+     * Show the form for editing.
      */
     public function edit(Transaction $transaction)
     {
-        if ($transaction->user_id !== Auth::id()) abort(403);
+        if ($transaction->user_id !== auth()->id()) {
+            abort(403);
+        }
 
         return Inertia::render('transactions/edit', [
             'transaction' => $transaction,
-            'categories'  => Auth::user()->categories()->get(),
-            'accounts'    => Auth::user()->accounts()->get(),
+            'categories' => Category::all(),
+            'accounts' => Account::all()
         ]);
     }
 
     /**
-     * 6. Update the transaction (Update)
+     * Update the specified transaction.
      */
     public function update(Request $request, Transaction $transaction)
     {
-        if ($transaction->user_id !== Auth::id()) abort(403);
+        if ($transaction->user_id !== auth()->id()) {
+            abort(403);
+        }
 
         $validated = $request->validate([
             'category_id' => 'required|exists:categories,id',
             'account_id'  => 'required|exists:accounts,id',
-            'amount'      => 'required|numeric|min:0.01',
-            'description' => 'nullable|string|max:255',
-            'date'        => 'required|date',
+            'amount'      => 'required|numeric|min:0',
             'type'        => 'required|in:income,expense',
+            'date'        => 'required|date',
+            'description' => 'nullable|string',
         ]);
 
-        $transaction->update($validated);
+        DB::transaction(function () use ($validated, $transaction) {
+            // 1. Reverse old balance
+            $oldAccount = Account::findOrFail($transaction->account_id);
+            if ($transaction->type === 'income') {
+                $oldAccount->balance -= $transaction->amount;
+            } else {
+                $oldAccount->balance += $transaction->amount;
+            }
+            $oldAccount->save();
 
-        return redirect()->route('transactions.index')->with('success', 'Transaction updated!');
+            // 2. Update transaction
+            $transaction->update($validated);
+
+            // 3. Apply new balance
+            $newAccount = Account::findOrFail($validated['account_id']);
+            if ($validated['type'] === 'income') {
+                $newAccount->balance += $validated['amount'];
+            } else {
+                $newAccount->balance -= $validated['amount'];
+            }
+            $newAccount->save();
+        });
+
+        return redirect()->route('transactions.index');
     }
 
     /**
-     * 7. Remove the transaction (Delete)
+     * Remove the transaction and restore balance.
      */
     public function destroy(Transaction $transaction)
     {
-        if ($transaction->user_id !== Auth::id()) abort(403);
+        if ($transaction->user_id !== auth()->id()) {
+            abort(403);
+        }
 
-        $transaction->delete();
+        DB::transaction(function () use ($transaction) {
+            $account = Account::findOrFail($transaction->account_id);
 
-        return redirect()->route('transactions.index')->with('success', 'Transaction deleted!');
+            if ($transaction->type === 'income') {
+                $account->balance -= $transaction->amount;
+            } else {
+                $account->balance += $transaction->amount;
+            }
+
+            $account->save();
+            $transaction->delete();
+        });
+
+        return redirect()->route('transactions.index');
     }
 }
